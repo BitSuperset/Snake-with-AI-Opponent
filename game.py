@@ -56,13 +56,15 @@ class Arena():
         self.matrix[-1,:]=1
         self.matrix[:,0]=1
         self.matrix[:,-1]=1
+
     def translateCoords(self,x,y):
         x//=SPACESIZE
         y//=SPACESIZE
         return x,y
 
-    def updateArena(self,x,y,value):
-        x,y=self.translateCoords(x,y)
+    def updateArena(self,x,y,value,spacecoords=True):
+        if spacecoords:
+            x,y=self.translateCoords(x,y)
         self.matrix[x][y]=value
 
     def printArena(self):
@@ -74,6 +76,15 @@ class Arena():
         x,y=self.translateCoords(x,y)
         return self.matrix[x][y]
     
+    def generateCoordRandomEmpty(self):
+        """return the Screen coordinates x,y value for the empty space in arena"""
+        emptyListX,emptyListY= np.where(self.matrix==Objects.EMPTY.value)
+        if len(emptyListX)==0:
+            return None
+        idx=random.randint(0,len(emptyListX)-1)
+        x,y=emptyListX[idx]*SPACESIZE,emptyListY[idx]*SPACESIZE
+        return x,y
+    
 class Snake():
     def __init__(self,x,y,direction=Direction.RIGHT,id=Objects.SNAKEPLAYER):
         
@@ -81,7 +92,7 @@ class Snake():
         self.original_point=Point(x,y)
         self.direction=direction
         self.body=[]
-        self.body.append(self.head)
+        self.body.append((self.head,self.direction))
         self.id=id
         # self.border=
 
@@ -128,14 +139,14 @@ class Snake():
     def updateSnake(self,flags:Flags,x,y,arena:Arena):
         """Update the snake body for movement"""
         self.head = Point(x, y)
-        self.body.insert(0,self.head)
+        self.body.insert(0,(self.head,self.direction))
         if flags==Flags.EmptyGround or flags==Flags.AtePoisonusFruit:
-            temp=self.body.pop()
+            temp,direction=self.body.pop()
             arena.updateArena(temp.x,temp.y,Objects.EMPTY.value)
         arena.updateArena(self.head.x,self.head.y,value=self.id.value)
 
     def updateUi(self,pygame:pygame,display:pygame.display):
-        for i, pt in enumerate(self.body):
+        for i, (pt,direction) in enumerate(self.body):
             color = BLUE1 if i > 0 else RED   # head different
             pygame.draw.rect(display, color, pygame.Rect(pt.x, pt.y, SPACESIZE, SPACESIZE))
 
@@ -147,12 +158,17 @@ class Snake():
 
 class Fruits():
     class BaseFruit:
-        def __init__(self):
-            self.x
-        pass
-    class NormalFruit():
-        
-        pass
+        def __init__(self,arena:Arena):
+            self.x,self.y=arena.generateCoordRandomEmpty()
+            self.reward=10
+            self.color=RED
+        def reset(self,arena:Arena):
+            self.x,self.y=arena.generateCoordRandomEmpty()
+        def updateUi(self,pygame:pygame,display:pygame.display):
+            pygame.draw.rect(display, self.color, pygame.Rect(self.x, self.y, SPACESIZE, SPACESIZE))
+    class NormalFruit(BaseFruit):
+        def __init__(self, arena:Arena):
+            super().__init__(arena)
     class BonusFruit():
         pass
     class PosionusFruit():
