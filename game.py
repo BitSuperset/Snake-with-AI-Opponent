@@ -12,8 +12,11 @@ RED = (200,0,0)
 BLUE1 = (0, 0, 255)
 BLUE2 = (0, 100, 255)
 BLACK = (0,0,0)
-
-SPEED = 40
+GREEN=(0,255,0)
+GOLDEN=(255,215,0)
+DARKBLUE=(0,0,139)
+DARKPURPLE=(48,25,52)
+PURPLE=(128,0,128)
 
 
 class Direction(Enum):
@@ -47,7 +50,6 @@ class Arena():
         self.height=height
         self.matrix=np.zeros(shape=(height//SPACESIZE,width//SPACESIZE))
         self.generate_border()
-        
 
     
     def generate_border(self):
@@ -86,21 +88,32 @@ class Arena():
         return x,y
     
 class Snake():
-    def __init__(self,x,y,direction=Direction.RIGHT,id=Objects.SNAKEPLAYER):
+    def __init__(self,x,y,arena:Arena,direction=Direction.RIGHT,id=Objects.SNAKEPLAYER):
         
         self.head=Point(x,y)
-        self.original_point=Point(x,y)
         self.direction=direction
         self.body=[]
         self.body.append((self.head,self.direction))
         self.id=id
-        # self.border=
+        arena.updateArena(x,y,value=self.id.value)
+        self.alive=True
+        self.last_spawn=0
 
-    def reset(self):
-        self.head=self.original_point
-        self.bodyLength=1
+
+    def reset(self,arena:Arena):
+        x,y=arena.generateCoordRandomEmpty()
+        arena.updateArena(x,y,value=self.id.value)
+        self.head=Point(x,y)
+        for segment, _ in self.body:
+            arena.updateArena(segment.x, segment.y, Objects.EMPTY.value)
+        del self.body
+        self.body=[]
+        # self.direction=Direction.RIGHT
+        self.body.append((self.head,self.direction))
+        self.alive=True
         
-    def move(self,direction:Direction,arena:Arena):
+        
+    def move(self,direction:Direction,arena:Arena)->Flags:
         """Takes the Direction Enum and return the Flag enum, and Arena"""
         self.direction=direction
         x=self.head.x
@@ -114,10 +127,12 @@ class Snake():
         elif self.direction == Direction.UP:
             y -= SPACESIZE
         
-        print(x,y)
+
         flags=self.obstacle_checker(obstacle=arena.returnObjectAtValue(x,y))
         if flags!=Flags.HitAnotherSnake and flags!=Flags.HitItselfOrBorder:
             self.updateSnake(flags,x,y,arena=arena)
+        else:
+            self.alive=False
         return flags
 
     
@@ -143,12 +158,16 @@ class Snake():
         if flags==Flags.EmptyGround or flags==Flags.AtePoisonusFruit:
             temp,direction=self.body.pop()
             arena.updateArena(temp.x,temp.y,Objects.EMPTY.value)
+            if flags==Flags.AtePoisonusFruit and len(self.body)!=1:
+                temp,direction=self.body.pop()
+                arena.updateArena(temp.x,temp.y,Objects.EMPTY.value)
         arena.updateArena(self.head.x,self.head.y,value=self.id.value)
 
     def updateUi(self,pygame:pygame,display:pygame.display):
-        for i, (pt,direction) in enumerate(self.body):
-            color = BLUE1 if i > 0 else RED   # head different
-            pygame.draw.rect(display, color, pygame.Rect(pt.x, pt.y, SPACESIZE, SPACESIZE))
+        if self.alive:
+            for i, (pt,direction) in enumerate(self.body):
+                color = BLUE1 if i > 0 else DARKBLUE   # head different
+                pygame.draw.rect(display, color, pygame.Rect(pt.x, pt.y, SPACESIZE, SPACESIZE))
 
     def show_direction(self):
         """Returns the direction of snake. Used for when player has not clicked the input"""
@@ -162,23 +181,34 @@ class Fruits():
             self.x,self.y=arena.generateCoordRandomEmpty()
             self.reward=10
             self.color=RED
-        def reset(self,arena:Arena):
+            self.id=Objects.NORMALFRUIT
+            self.alive=True
+            self.last_spawned=0
+        def spawn(self,arena:Arena):
             self.x,self.y=arena.generateCoordRandomEmpty()
+            self.alive=True
+            arena.updateArena(self.x,self.y,value=self.id.value)
         def updateUi(self,pygame:pygame,display:pygame.display):
-            pygame.draw.rect(display, self.color, pygame.Rect(self.x, self.y, SPACESIZE, SPACESIZE))
+            if self.alive:
+                pygame.draw.rect(display, self.color, pygame.Rect(self.x, self.y, SPACESIZE, SPACESIZE))
+
     class NormalFruit(BaseFruit):
         def __init__(self, arena:Arena):
             super().__init__(arena)
+            arena.updateArena(self.x,self.y,value=self.id.value)
     class BonusFruit():
         pass
-    class PosionusFruit():
-        pass
+    class PosionusFruit(BaseFruit):
+        def __init__(self, arena):
+            super().__init__(arena)
+            self.reward=-10
+            self.color=GREEN
+            self.id=Objects.POSIONFRUIT
+            self.alive=False
 
 class SnakeGameAITron():
     """Creates a Snake game class. Reqires pygames, collection and enum. Give height and width"""
     def __init__(self,width,height):
-        import pygame
-        from enum import Enum
         self.pygame=pygame
         self.pygame.init()
         self.width=width
@@ -189,42 +219,86 @@ class SnakeGameAITron():
         self.clock=self.pygame.time.Clock()
 
         self.arena=Arena(self.width,self.height)
-        self.player_snake=Snake(50,50,id=Objects.SNAKEPLAYER)
-        # self.ai_snake=Snake()
+        self.player_snake=Snake(50,50,id=Objects.SNAKEPLAYER,arena=self.arena)
+        self.normal_fruit=Fruits.NormalFruit(self.arena)
+        self.posionFruit=Fruits.PosionusFruit(self.arena)
     
-    def Sync(self):
-        direction= self.get_input()
-        if direction == Direction.NoDIR:
-            direction=self.player_snake.show_direction()
-        print(direction)
-        self.player_snake.move(direction=direction,arena=self.arena)
+        # self.ai_snake=Snake()
+
+        self.SNAKESPEED = 50
+        self.SPAWNINGOFPOSIONFRUIT=1000
+        self.POSIONLIFE=1000
+
+    
+    def uiUpdate(self):
+        """Update the games ui"""
+        self.display_mode.fill(BLACK)
         self.player_snake.updateUi(pygame=self.pygame,display=self.display_mode)
+        self.normal_fruit.updateUi(pygame=self.pygame,display=self.display_mode)
+        self.posionFruit.updateUi(pygame=self.pygame,display=self.display_mode)
+
+    def SnakeLogicupdate(self,time):
+        direction= self.get_input()
+        if time-self.player_snake.last_spawn>=self.SNAKESPEED:
+            if direction == Direction.NoDIR:
+                direction=self.player_snake.show_direction()
+            flag=self.player_snake.move(direction=direction,arena=self.arena)
+            self.snake_flag_response(flag=flag)
+            self.player_snake.last_spawn=time
+
+    def PosionFruitUpdate(self,time):
+        if time-self.posionFruit.last_spawned>self.SPAWNINGOFPOSIONFRUIT and self.posionFruit.alive==False:
+            self.posionFruit.spawn(self.arena)
+            if(time-self.posionFruit.last_spawned)>self.POSIONLIFE:
+                self.posionFruit.alive=False
+
+        pass
+    def DeletePosionFruit(self,time):
+        pass
+
+    def Sync(self,time)->int:
+        self.SnakeLogicupdate(time)
+
+        pass
+        self.uiUpdate()
+    
+    def snake_flag_response(self,flag:Flags):
+        if flag==Flags.AteNormalFruit:
+            self.normal_fruit.spawn(arena=self.arena)
+        elif flag==Flags.HitItselfOrBorder:
+            self.player_snake.reset(arena=self.arena)
+        elif flag==Flags.AtePoisonusFruit:
+            self.posionFruit.spawn(arena=self.arena)
         
-        
+
 
     def get_input(self)->Direction:
         keys = self.pygame.key.get_pressed()
-        if keys[self.pygame.K_w]:
+
+        if keys[self.pygame.K_w] and self.player_snake.show_direction()!=Direction.DOWN:
             return Direction.UP
-        elif keys[self.pygame.K_d]:
+        elif keys[self.pygame.K_d] and self.player_snake.show_direction()!=Direction.LEFT:
             return Direction.RIGHT
-        elif keys[self.pygame.K_s]:
+        elif keys[self.pygame.K_s]and self.player_snake.show_direction()!=Direction.UP:
             return Direction.DOWN
-        elif keys[self.pygame.K_a]:
+        elif keys[self.pygame.K_a]and self.player_snake.show_direction()!=Direction.RIGHT:
             return Direction.LEFT
         elif keys[self.pygame.K_ESCAPE]:
+            return Direction.NoDIR
             pass
+        elif keys[self.pygame.K_q]:
+            self.pygame.quit()
+            exit()
         else:
             return Direction.NoDIR
         
-
 game=SnakeGameAITron(width=500,height=1000)
+last_time=game.pygame.time.get_ticks()
 while True:
-    for event in pygame.event.get():
-        if event.type == pygame.QUIT:
-            pygame.quit()
+    for event in game.pygame.event.get():
+        if event.type == game.pygame.QUIT:
+            game.pygame.quit()
             exit()
-    game.display_mode.fill(BLACK)
-    game.Sync()
+    last_time=game.Sync(game.pygame.time.get_ticks())
     game.display.flip()
-    game.clock.tick(10)
+    game.clock.tick(60)
