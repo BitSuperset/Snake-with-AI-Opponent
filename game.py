@@ -1,7 +1,7 @@
 from enum import Enum
 import numpy as np
 from collections import namedtuple
-SPACESIZE= 25
+SPACESIZE=27
 Point=namedtuple('Point','x,y')
 import pygame
 import random
@@ -17,6 +17,9 @@ GOLDEN=(255,215,0)
 DARKBLUE=(0,0,139)
 DARKPURPLE=(48,25,52)
 PURPLE=(128,0,128)
+BORDER_COLOR = (100, 100, 100)
+THICKNESS = 22  # thickness of the border
+
 
 
 class Direction(Enum):
@@ -36,37 +39,36 @@ class Objects(Enum):
      SNAKEAI=6
      SNAKEPLAYER2=7
 
+
 class Flags(Enum):
     EmptyGround=0
     HitItselfOrBorder=1
-    HitAnotherSnake=2
+    HitPLAYERSNAKE2=3
+    HitPLAYERSNAKE1=7
+    HitAISNAKE=2
     AteNormalFruit=4
     AteBonusFruit=5
     AtePoisonusFruit=6
 
 class Arena():
-    def __init__(self,width,height):
+    def __init__(self,width,height,hudSpace=0):
         self.width=width
-        self.height=height
-        self.matrix=np.zeros(shape=(height//SPACESIZE,width//SPACESIZE))
+        self.hudSpace=hudSpace
+        self.height=height-hudSpace*SPACESIZE
+        print(hudSpace)
+        self.matrix=np.zeros(shape=(self.width//SPACESIZE,self.height//SPACESIZE))
         self.generate_border()
 
     
     def generate_border(self):
         """Generates boarder"""
-        self.matrix[0,:]=1
-        self.matrix[-1,:]=1
-        self.matrix[:,0]=1
-        self.matrix[:,-1]=1
+        self.matrix[0,:]=Objects.BORDER.value
+        self.matrix[-1,:]=Objects.BORDER.value
+        self.matrix[:,0]=Objects.BORDER.value
+        self.matrix[:,-1]=Objects.BORDER.value
 
-    def translateCoords(self,x,y):
-        x//=SPACESIZE
-        y//=SPACESIZE
-        return x,y
+    def updateArena(self,x,y,value):
 
-    def updateArena(self,x,y,value,spacecoords=True):
-        if spacecoords:
-            x,y=self.translateCoords(x,y)
         self.matrix[x][y]=value
 
     def printArena(self):
@@ -75,7 +77,6 @@ class Arena():
 
     def returnObjectAtValue(self,x,y):
         """Returns the value in the matrix. Not the Objects class"""
-        x,y=self.translateCoords(x,y)
         return self.matrix[x][y]
     
     def generateCoordRandomEmpty(self):
@@ -84,11 +85,14 @@ class Arena():
         if len(emptyListX)==0:
             return None
         idx=random.randint(0,len(emptyListX)-1)
-        x,y=emptyListX[idx]*SPACESIZE,emptyListY[idx]*SPACESIZE
+        x,y=emptyListX[idx],emptyListY[idx]
         return x,y
+
+    def getArena(self):
+        return self.matrix
     
 class Snake():
-    def __init__(self,x,y,arena:Arena,direction=Direction.RIGHT,id=Objects.SNAKEPLAYER):
+    def __init__(self,x,y,arena:Arena,direction=Direction.RIGHT,id=Objects.SNAKEPLAYER,hudSpace=0):
         
         self.head=Point(x,y)
         self.direction=direction
@@ -98,6 +102,9 @@ class Snake():
         arena.updateArena(x,y,value=self.id.value)
         self.alive=True
         self.last_spawn=0
+        self.last_tailpoint_for_bonus=()
+        self.score=0
+        self.hudSpace=hudSpace
 
 
     def reset(self,arena:Arena):
@@ -108,6 +115,7 @@ class Snake():
             arena.updateArena(segment.x, segment.y, Objects.EMPTY.value)
         del self.body
         self.body=[]
+        self.score=0
         # self.direction=Direction.RIGHT
         self.body.append((self.head,self.direction))
         self.alive=True
@@ -119,17 +127,17 @@ class Snake():
         x=self.head.x
         y=self.head.y
         if self.direction == Direction.RIGHT:
-            x += SPACESIZE
+            x += 1
         elif self.direction == Direction.LEFT:
-            x -= SPACESIZE
+            x -= 1
         elif self.direction == Direction.DOWN:
-            y += SPACESIZE
+            y += 1
         elif self.direction == Direction.UP:
-            y -= SPACESIZE
+            y -= 1
         
 
         flags=self.obstacle_checker(obstacle=arena.returnObjectAtValue(x,y))
-        if flags!=Flags.HitAnotherSnake and flags!=Flags.HitItselfOrBorder:
+        if flags!=Flags.HitPLAYERSNAKE1 and flags!=Flags.HitItselfOrBorder and flags!=Flags.HitPLAYERSNAKE2 and flags!=Flags.HitAISNAKE:
             self.updateSnake(flags,x,y,arena=arena)
         else:
             self.alive=False
@@ -148,59 +156,80 @@ class Snake():
             return Flags.AtePoisonusFruit
         elif obstacle==Objects.EMPTY.value:
             return Flags.EmptyGround
-        else:
-            return Flags.HitAnotherSnake
+        elif obstacle==Objects.SNAKEPLAYER.value:
+            return Flags.HitPLAYERSNAKE1
+        elif obstacle==Objects.SNAKEPLAYER2.value:
+            return Flags.HitPLAYERSNAKE2
+        elif obstacle==Objects.SNAKEAI.value:
+            return Flags.HitAISNAKE
+        
 
     def updateSnake(self,flags:Flags,x,y,arena:Arena):
         """Update the snake body for movement"""
         self.head = Point(x, y)
         self.body.insert(0,(self.head,self.direction))
         if flags==Flags.EmptyGround or flags==Flags.AtePoisonusFruit:
-            temp,direction=self.body.pop()
+            self.last_tailpoint_for_bonus=self.body.pop()
+            temp,direction=self.last_tailpoint_for_bonus
             arena.updateArena(temp.x,temp.y,Objects.EMPTY.value)
             if flags==Flags.AtePoisonusFruit and len(self.body)!=1:
-                temp,direction=self.body.pop()
+                self.last_tailpoint_for_bonus=self.body.pop()
+                temp,direction=self.last_tailpoint_for_bonus
                 arena.updateArena(temp.x,temp.y,Objects.EMPTY.value)
+        elif flags== Flags.AteBonusFruit:
+            self.body.append(self.last_tailpoint_for_bonus)
+            temp,direction=self.last_tailpoint_for_bonus
+            arena.updateArena(temp.x,temp.y,value=self.id.value)
         arena.updateArena(self.head.x,self.head.y,value=self.id.value)
 
     def updateUi(self,pygame:pygame,display:pygame.display):
         if self.alive:
             for i, (pt,direction) in enumerate(self.body):
                 color = BLUE1 if i > 0 else DARKBLUE   # head different
-                pygame.draw.rect(display, color, pygame.Rect(pt.x, pt.y, SPACESIZE, SPACESIZE))
+                pygame.draw.rect(display, color, pygame.Rect(pt.x*SPACESIZE, (pt.y+self.hudSpace)*SPACESIZE, SPACESIZE, SPACESIZE))
 
     def show_direction(self):
         """Returns the direction of snake. Used for when player has not clicked the input"""
         return self.direction
     
+    def update_score(self,value):
+        """Increment the score by value parameter"""
+        self.score+=value
         
 
 class Fruits():
     class BaseFruit:
-        def __init__(self,arena:Arena):
+        def __init__(self,arena:Arena,hudSpace=0):
             self.x,self.y=arena.generateCoordRandomEmpty()
             self.reward=10
             self.color=RED
             self.id=Objects.NORMALFRUIT
             self.alive=True
             self.last_spawned=0
+            self.hudSpace=hudSpace
         def spawn(self,arena:Arena):
             self.x,self.y=arena.generateCoordRandomEmpty()
             self.alive=True
             arena.updateArena(self.x,self.y,value=self.id.value)
         def updateUi(self,pygame:pygame,display:pygame.display):
             if self.alive:
-                pygame.draw.rect(display, self.color, pygame.Rect(self.x, self.y, SPACESIZE, SPACESIZE))
+                pygame.draw.rect(display, self.color, pygame.Rect(self.x*SPACESIZE, (self.y+self.hudSpace)*SPACESIZE, SPACESIZE, SPACESIZE))
 
     class NormalFruit(BaseFruit):
-        def __init__(self, arena:Arena):
-            super().__init__(arena)
+        def __init__(self, arena:Arena,hudSpace):
+            super().__init__(arena,hudSpace=hudSpace)
             arena.updateArena(self.x,self.y,value=self.id.value)
-    class BonusFruit():
-        pass
+    class BonusFruit(BaseFruit):
+        def __init__(self, arena,hudSPace):
+            super().__init__(arena,hudSpace=hudSPace)
+            self.reward=50
+            self.color=GOLDEN
+            self.id=Objects.BONUSFRUIT
+            self.alive=False
+
     class PosionusFruit(BaseFruit):
-        def __init__(self, arena):
-            super().__init__(arena)
+        def __init__(self, arena,hudSpace):
+            super().__init__(arena,hudSpace=hudSpace)
             self.reward=-10
             self.color=GREEN
             self.id=Objects.POSIONFRUIT
@@ -208,34 +237,49 @@ class Fruits():
 
 class SnakeGameAITron():
     """Creates a Snake game class. Reqires pygames, collection and enum. Give height and width"""
-    def __init__(self,width,height):
+    def __init__(self,width=None,height=None,hudSpace=50):
         self.pygame=pygame
         self.pygame.init()
-        self.width=width
-        self.height=height
-        self.pygame.display.set_caption("Snake Ai Game")
         self.display=self.pygame.display
-        self.display_mode=self.display.set_mode((self.height,self.width))
+        self.hudSpace=hudSpace
+        if width==None and height==None:
+            self.width=self.display.Info().current_w
+            self.height=self.display.Info().current_h
+        else:
+            self.width=width
+            self.height=height
+        self.display.set_caption("Snake Ai Game")
+        self.display_mode=self.display.set_mode((self.width,self.height))
         self.clock=self.pygame.time.Clock()
 
-        self.arena=Arena(self.width,self.height)
-        self.player_snake=Snake(50,50,id=Objects.SNAKEPLAYER,arena=self.arena)
-        self.normal_fruit=Fruits.NormalFruit(self.arena)
-        self.posionFruit=Fruits.PosionusFruit(self.arena)
-    
+        self.arena=Arena(self.width,self.height,hudSpace=self.hudSpace)
+        self.player_snake=Snake(5,5,id=Objects.SNAKEPLAYER,arena=self.arena,hudSpace=self.hudSpace)
+        self.normal_fruit=Fruits.NormalFruit(self.arena,hudSpace=self.hudSpace)
+        self.posionFruit=Fruits.PosionusFruit(self.arena,self.hudSpace)
+        self.bonusFruit=Fruits.BonusFruit(self.arena,self.hudSpace)
+        self.AiSnake=Snake(15,15,arena=self.arena,id=Objects.SNAKEAI,hudSpace=self.hudSpace)
         # self.ai_snake=Snake()
 
-        self.SNAKESPEED = 50
-        self.SPAWNINGOFPOSIONFRUIT=1000
-        self.POSIONLIFE=1000
+        self.SNAKESPEED = 60
+        self.SPAWNINGOFPOSIONFRUIT=5000
+        self.POSIONLIFE=5000
 
-    
+        self.SPAWININGBONUSFRUIT=5000
+        self.BONUSLIFE=5000 
+
+
     def uiUpdate(self):
         """Update the games ui"""
         self.display_mode.fill(BLACK)
+        self.pygame.draw.rect(self.display_mode, BORDER_COLOR, pygame.Rect(0, self.hudSpace*SPACESIZE, self.width, self.height-self.hudSpace*SPACESIZE), SPACESIZE)    
         self.player_snake.updateUi(pygame=self.pygame,display=self.display_mode)
         self.normal_fruit.updateUi(pygame=self.pygame,display=self.display_mode)
         self.posionFruit.updateUi(pygame=self.pygame,display=self.display_mode)
+        self.bonusFruit.updateUi(pygame=self.pygame,display=self.display_mode)
+        playerBluescore_text = self.pygame.font.Font('arial.ttf', 25).render("Player Blue Score: " + str(self.player_snake.score), True, WHITE)
+        playerRedscore_text = self.pygame.font.Font('arial.ttf', 25).render("Player Purple Score: " + str(self.AiSnake.score), True, WHITE)
+        self.display_mode.blit(playerBluescore_text, [10, 10])
+        self.display_mode.blit(playerRedscore_text, [1000, 10])
 
     def SnakeLogicupdate(self,time):
         direction= self.get_input()
@@ -243,32 +287,55 @@ class SnakeGameAITron():
             if direction == Direction.NoDIR:
                 direction=self.player_snake.show_direction()
             flag=self.player_snake.move(direction=direction,arena=self.arena)
-            self.snake_flag_response(flag=flag)
+            self.snake_flag_response(flag=flag,time=time,snake=self.player_snake)
             self.player_snake.last_spawn=time
 
     def PosionFruitUpdate(self,time):
-        if time-self.posionFruit.last_spawned>self.SPAWNINGOFPOSIONFRUIT and self.posionFruit.alive==False:
-            self.posionFruit.spawn(self.arena)
-            if(time-self.posionFruit.last_spawned)>self.POSIONLIFE:
-                self.posionFruit.alive=False
-
-        pass
-    def DeletePosionFruit(self,time):
-        pass
+        if time-self.posionFruit.last_spawned>self.SPAWNINGOFPOSIONFRUIT:
+            if self.posionFruit.alive==False:
+                self.posionFruit.spawn(self.arena)
+                self.posionFruit.last_spawned = time 
+            else:
+                if(time-self.posionFruit.last_spawned)>self.POSIONLIFE:
+                    self.posionFruit.alive=False
+                    self.arena.updateArena(self.posionFruit.x,self.posionFruit.y,value=Objects.EMPTY.value)
+                    self.posionFruit.last_spawned=time
+                        
+    def BonusFruitUpdate(self,time):
+        if time-self.bonusFruit.last_spawned>self.SPAWININGBONUSFRUIT:
+            if self.bonusFruit.alive==False:
+                self.bonusFruit.spawn(self.arena)
+                self.bonusFruit.last_spawned = time 
+            else:
+                if(time-self.bonusFruit.last_spawned)>self.BONUSLIFE:
+                    self.bonusFruit.alive=False
+                    self.arena.updateArena(self.bonusFruit.x,self.bonusFruit.y,value=Objects.EMPTY.value)
+                    self.bonusFruit.last_spawned=time
 
     def Sync(self,time)->int:
         self.SnakeLogicupdate(time)
-
+        self.PosionFruitUpdate(time)
+        self.BonusFruitUpdate(time=time)
         pass
         self.uiUpdate()
     
-    def snake_flag_response(self,flag:Flags):
+    def snake_flag_response(self,flag:Flags,time,snake:Snake):
         if flag==Flags.AteNormalFruit:
+            snake.update_score(self.normal_fruit.reward)
             self.normal_fruit.spawn(arena=self.arena)
         elif flag==Flags.HitItselfOrBorder:
-            self.player_snake.reset(arena=self.arena)
+            snake.reset(arena=self.arena)
         elif flag==Flags.AtePoisonusFruit:
-            self.posionFruit.spawn(arena=self.arena)
+            snake.update_score(self.normal_fruit.reward)
+            self.posionFruit.alive=False
+            self.posionFruit.last_spawned=time
+        elif flag==Flags.AteBonusFruit:
+            snake.update_score(self.normal_fruit.reward)
+            self.bonusFruit.alive=False
+            self.bonusFruit.last_spawned=time
+        elif flag==Flags.HitAISNAKE:
+            snake.reset(arena=self.arena)
+            self.AiSnake.update_score(80)
         
 
 
@@ -292,7 +359,27 @@ class SnakeGameAITron():
         else:
             return Direction.NoDIR
         
-game=SnakeGameAITron(width=500,height=1000)
+    def get_inputforPlayer2(self)->Direction:
+        keys = self.pygame.key.get_pressed()
+
+        if keys[self.pygame.K_UP] and self.player_snake.show_direction()!=Direction.DOWN:
+            return Direction.UP
+        elif keys[self.pygame.K_RIGHT] and self.player_snake.show_direction()!=Direction.LEFT:
+            return Direction.RIGHT
+        elif keys[self.pygame.K_DOWN]and self.player_snake.show_direction()!=Direction.UP:
+            return Direction.DOWN
+        elif keys[self.pygame.K_LEFT]and self.player_snake.show_direction()!=Direction.RIGHT:
+            return Direction.LEFT
+        elif keys[self.pygame.K_ESCAPE]:
+            return Direction.NoDIR
+            pass
+        elif keys[self.pygame.K_q]:
+            self.pygame.quit()
+            exit()
+        else:
+            return Direction.NoDIR
+
+game=SnakeGameAITron(hudSpace=2)
 last_time=game.pygame.time.get_ticks()
 while True:
     for event in game.pygame.event.get():
@@ -301,4 +388,4 @@ while True:
             exit()
     last_time=game.Sync(game.pygame.time.get_ticks())
     game.display.flip()
-    game.clock.tick(60)
+    game.clock.tick(80)
